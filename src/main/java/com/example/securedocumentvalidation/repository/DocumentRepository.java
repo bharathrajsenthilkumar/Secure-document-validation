@@ -11,4 +11,7 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
     List<Document> findByOwnerUsername(String ownerUsername);
 
     Page<Document> findByOwnerUsername(String ownerUsername, Pageable pageable);
+
+    // Dashboard Statistics
+    long count();
 }

@@ -11,4 +11,7 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
     Page<AuditLog> findByUsername(String username, Pageable pageable);
 
     Page<AuditLog> findByAction(AuditAction action, Pageable pageable);
+
+    // Dashboard Statistics
+    long countByAction(AuditAction action);
 }

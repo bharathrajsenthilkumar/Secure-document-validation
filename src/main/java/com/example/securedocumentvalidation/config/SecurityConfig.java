@@ -26,17 +26,63 @@ public class SecurityConfig {
 
         http
                 .csrf(csrf -> csrf.disable())
+
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
+
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/**").permitAll()
-                        .requestMatchers("/api/admin/**").hasAuthority("ROLE_ADMIN")
-                        .requestMatchers("/api/home/**").hasAnyAuthority("ROLE_USER", "ROLE_ADMIN")
-                        .requestMatchers("/api/documents/**").authenticated()
-                        .anyRequest().authenticated()
+
+                        // =========================
+                        // SWAGGER
+                        // =========================
+                        .requestMatchers(
+                                "/v3/api-docs/**",
+                                "/swagger-ui/**",
+                                "/swagger-ui.html"
+                        ).permitAll()
+
+                        // =========================
+                        // AUTH
+                        // =========================
+                        .requestMatchers("/api/auth/**")
+                        .permitAll()
+
+                        // =========================
+                        // ADMIN
+                        // =========================
+                        .requestMatchers("/api/admin/**")
+                        .hasAuthority("ROLE_ADMIN")
+
+                        // =========================
+                        // HOME
+                        // =========================
+                        .requestMatchers("/api/home/**")
+                        .hasAnyAuthority("ROLE_USER", "ROLE_ADMIN")
+
+                        // =========================
+                        // DOCUMENTS
+                        // =========================
+                        .requestMatchers("/api/documents/**")
+                        .authenticated()
+
+                        // =========================
+                        // AUDIT
+                        // =========================
+                        .requestMatchers("/api/audit/**")
+                        .hasAuthority("ROLE_ADMIN")
+
+                        // =========================
+                        // EVERYTHING ELSE
+                        // =========================
+                        .anyRequest()
+                        .authenticated()
                 )
-                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+
+                .addFilterBefore(
+                        jwtFilter,
+                        UsernamePasswordAuthenticationFilter.class
+                );
 
         return http.build();
     }

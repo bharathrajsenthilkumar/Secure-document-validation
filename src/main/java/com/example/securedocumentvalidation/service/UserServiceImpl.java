@@ -27,6 +27,7 @@ public class UserServiceImpl implements UserService {
     public UserServiceImpl(UserRepository userRepository,
                            PasswordEncoder passwordEncoder,
                            JwtUtil jwtUtil) {
+
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
@@ -45,14 +46,34 @@ public class UserServiceImpl implements UserService {
         }
 
         User user = new User();
-        user.setUsername(request.getUsername());
-        user.setPassword(passwordEncoder.encode(request.getPassword()));
 
-        // Convert String → Enum safely
+        user.setUsername(request.getUsername());
+
+        user.setPassword(
+                passwordEncoder.encode(request.getPassword())
+        );
+
+        // ===============================
+        // ROLE CONVERSION
+        // ===============================
         try {
-            user.setRole(Role.valueOf(request.getRole().toUpperCase()));
+
+            String role = request.getRole()
+                    .trim()
+                    .toUpperCase();
+
+            // Auto add ROLE_ if missing
+            if (!role.startsWith("ROLE_")) {
+                role = "ROLE_" + role;
+            }
+
+            user.setRole(Role.valueOf(role));
+
         } catch (IllegalArgumentException e) {
-            throw new RuntimeException("Invalid role. Use USER or ADMIN");
+
+            throw new RuntimeException(
+                    "Invalid role. Use USER or ADMIN"
+            );
         }
 
         return userRepository.save(user);
@@ -67,14 +88,22 @@ public class UserServiceImpl implements UserService {
         logger.info("User attempting login: {}", request.getUsername());
 
         User user = userRepository.findByUsername(request.getUsername())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() ->
+                        new RuntimeException("User not found")
+                );
 
-        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            logger.error("Invalid password for user: {}", request.getUsername());
+        if (!passwordEncoder.matches(
+                request.getPassword(),
+                user.getPassword())) {
+
+            logger.error(
+                    "Invalid password for user: {}",
+                    request.getUsername()
+            );
+
             throw new BadCredentialsException("Invalid credentials");
         }
 
-        // FIXED: pass username + role
         return jwtUtil.generateToken(
                 user.getUsername(),
                 user.getRole().name()
@@ -86,7 +115,9 @@ public class UserServiceImpl implements UserService {
     // ===============================
     @Override
     public List<User> getAllUsers() {
+
         logger.info("Fetching all users from database");
+
         return userRepository.findAll();
     }
 
@@ -98,6 +129,7 @@ public class UserServiceImpl implements UserService {
         }
 
         userRepository.deleteById(id);
+
         logger.warn("User deleted with id: {}", id);
     }
 }

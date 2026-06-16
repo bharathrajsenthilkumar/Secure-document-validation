@@ -13,7 +13,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
-
+import com.example.securedocumentvalidation.dto.VerificationResponse;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,6 +32,7 @@ public class DocumentService {
 
     public DocumentService(DocumentRepository repository,
                            AuditService auditService) {
+
         this.repository = repository;
         this.auditService = auditService;
     }
@@ -54,7 +55,8 @@ public class DocumentService {
     // =========================
     // LIST ALL DOCUMENTS (ADMIN)
     // =========================
-    public Page<DocumentResponseDTO> getAllDocuments(Pageable pageable) {
+    public Page<DocumentResponseDTO> getAllDocuments(
+            Pageable pageable) {
 
         return repository.findAll(pageable)
                 .map(doc -> new DocumentResponseDTO(
@@ -74,19 +76,29 @@ public class DocumentService {
         Files.createDirectories(Paths.get(UPLOAD_DIR));
 
         String storedFileName =
-                System.currentTimeMillis() + "_" + file.getOriginalFilename();
+                System.currentTimeMillis()
+                        + "_"
+                        + file.getOriginalFilename();
 
-        Path filePath = Paths.get(UPLOAD_DIR, storedFileName);
+        Path filePath =
+                Paths.get(UPLOAD_DIR, storedFileName);
 
+        // ORIGINAL FILE BYTES
         byte[] originalBytes = file.getBytes();
 
+        // HASH GENERATION
         String hash = HashUtil.sha256(originalBytes);
 
-        byte[] encryptedBytes = CryptoUtil.encrypt(originalBytes);
+        // ENCRYPT FILE
+        byte[] encryptedBytes =
+                CryptoUtil.encrypt(originalBytes);
 
+        // SAVE ENCRYPTED FILE
         Files.write(filePath, encryptedBytes);
 
+        // SAVE DB METADATA
         Document doc = new Document();
+
         doc.setFilename(file.getOriginalFilename());
         doc.setFilepath(filePath.toString());
         doc.setOwnerUsername(username);
@@ -94,17 +106,24 @@ public class DocumentService {
 
         Document saved = repository.save(doc);
 
-        // 🔥 AUDIT LOG
-        auditService.log(username, AuditAction.UPLOAD, saved.getId());
+        // AUDIT LOG
+        auditService.log(
+                username,
+                AuditAction.UPLOAD,
+                saved.getId()
+        );
 
-        log.info("Document uploaded | id={} | owner={}",
-                saved.getId(), username);
+        log.info(
+                "Document uploaded | id={} | owner={}",
+                saved.getId(),
+                username
+        );
 
         return saved;
     }
 
     // =========================
-    // DOWNLOAD DOCUMENT (AUTH + VERIFY)
+    // DOWNLOAD DOCUMENT
     // =========================
     public DownloadedDocument downloadDocument(
             Long id,
@@ -112,14 +131,21 @@ public class DocumentService {
             boolean isAdmin) {
 
         Document doc = repository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Document not found"));
+                .orElseThrow(() ->
+                        new RuntimeException("Document not found")
+                );
 
-        boolean isOwner = doc.getOwnerUsername().equals(username);
+        boolean isOwner =
+                doc.getOwnerUsername().equals(username);
 
+        // ACCESS CHECK
         if (!isOwner && !isAdmin) {
 
-            // 🔥 AUDIT DENIED
-            auditService.log(username, AuditAction.DENIED, id);
+            auditService.log(
+                    username,
+                    AuditAction.DENIED,
+                    id
+            );
 
             throw new AccessDeniedException("Forbidden");
         }
@@ -127,40 +153,192 @@ public class DocumentService {
         Path path = Paths.get(doc.getFilepath());
 
         if (!Files.exists(path)) {
-            throw new RuntimeException("File missing from server");
+            throw new RuntimeException(
+                    "File missing from server"
+            );
         }
 
         try {
-            byte[] encryptedBytes = Files.readAllBytes(path);
 
-            byte[] decryptedBytes = CryptoUtil.decrypt(encryptedBytes);
+            // READ ENCRYPTED FILE
+            byte[] encryptedBytes =
+                    Files.readAllBytes(path);
 
-            String currentHash = HashUtil.sha256(decryptedBytes);
+            // DECRYPT FILE
+            byte[] decryptedBytes =
+                    CryptoUtil.decrypt(encryptedBytes);
+
+            // VERIFY HASH
+            String currentHash =
+                    HashUtil.sha256(decryptedBytes);
 
             if (!currentHash.equals(doc.getHash())) {
 
-                log.error("Integrity violation for document id={}", id);
+                log.error(
+                        "Integrity violation for document id={}",
+                        id
+                );
 
-                auditService.log(username, AuditAction.DENIED, id);
+                auditService.log(
+                        username,
+                        AuditAction.DENIED,
+                        id
+                );
 
-                throw new AccessDeniedException("File integrity compromised");
+                throw new AccessDeniedException(
+                        "File integrity compromised"
+                );
             }
 
-            // 🔥 AUDIT SUCCESSFUL DOWNLOAD
-            auditService.log(username, AuditAction.DOWNLOAD, id);
+            // AUDIT SUCCESSFUL DOWNLOAD
+            auditService.log(
+                    username,
+                    AuditAction.DOWNLOAD,
+                    id
+            );
 
             return new DownloadedDocument(
                     doc.getFilename(),
                     decryptedBytes
             );
 
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to read or verify file", e);
+        } catch (Exception e) {
+
+            log.error(
+                    "Integrity violation for document id={}",
+                    id
+            );
+
+            // AUDIT FAILED ACCESS
+            auditService.log(
+                    username,
+                    AuditAction.DENIED,
+                    id
+            );
+
+            throw new AccessDeniedException(
+                    "File integrity compromised"
+            );
         }
     }
+    // =========================
+// VERIFY DOCUMENT
+// =========================
+    public VerificationResponse verifyDocument(Long id) {
 
+        Document doc = repository.findById(id)
+                .orElseThrow(() ->
+                        new RuntimeException("Document not found"));
+
+        try {
+
+            Path path = Paths.get(doc.getFilepath());
+
+            if (!Files.exists(path)) {
+
+                return new VerificationResponse(
+                        doc.getId(),
+                        doc.getFilename(),
+                        false,
+                        "File not found on server"
+                );
+            }
+
+            byte[] encryptedBytes =
+                    Files.readAllBytes(path);
+
+            byte[] decryptedBytes =
+                    CryptoUtil.decrypt(encryptedBytes);
+
+            String currentHash =
+                    HashUtil.sha256(decryptedBytes);
+
+            boolean verified =
+                    currentHash.equals(doc.getHash());
+
+            return new VerificationResponse(
+                    doc.getId(),
+                    doc.getFilename(),
+                    verified,
+                    verified
+                            ? "Document integrity verified successfully"
+                            : "Document integrity compromised"
+            );
+
+        } catch (Exception e) {
+
+            return new VerificationResponse(
+                    doc.getId(),
+                    doc.getFilename(),
+                    false,
+                    "Verification failed"
+            );
+        }
+    }
+    // =========================
+// DELETE DOCUMENT
+// =========================
+    public void deleteDocument(
+            Long id,
+            String username,
+            boolean isAdmin) {
+
+        Document doc = repository.findById(id)
+                .orElseThrow(() ->
+                        new RuntimeException("Document not found"));
+
+        boolean isOwner =
+                doc.getOwnerUsername().equals(username);
+
+        // ACCESS CHECK
+        if (!isOwner && !isAdmin) {
+
+            auditService.log(
+                    username,
+                    AuditAction.DENIED,
+                    id
+            );
+
+            throw new AccessDeniedException("Forbidden");
+        }
+
+        try {
+
+            Path path = Paths.get(doc.getFilepath());
+
+            if (Files.exists(path)) {
+                Files.delete(path);
+            }
+
+            repository.delete(doc);
+
+            auditService.log(
+                    username,
+                    AuditAction.DELETE,
+                    id
+            );
+
+            log.info(
+                    "Document deleted | id={} | user={}",
+                    id,
+                    username
+            );
+
+        } catch (Exception e) {
+
+            e.printStackTrace();
+
+            throw new RuntimeException(
+                    "Failed to delete document: "
+                            + e.getMessage()
+            );
+        }
+    }
     // =========================
     // DOWNLOAD RESPONSE RECORD
     // =========================
-    public record DownloadedDocument(String filename, byte[] data) {}
+    public record DownloadedDocument(
+            String filename,
+            byte[] data
+    ) {}
 }
