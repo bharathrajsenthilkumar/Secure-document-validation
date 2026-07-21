@@ -15,14 +15,15 @@ public class DashboardStatsDTO {
             long totalUploads,
             long totalDownloads,
             long totalDeniedAccess,
-            long totalDeletedDocuments) {
-
+            long totalDeletedDocuments
+    ) {
         this.totalUsers = totalUsers;
         this.totalDocuments = totalDocuments;
         this.totalUploads = totalUploads;
         this.totalDownloads = totalDownloads;
         this.totalDeniedAccess = totalDeniedAccess;
-        this.totalDeletedDocuments = totalDeletedDocuments;
+        this.totalDeletedDocuments =
+                totalDeletedDocuments;
     }
 
     public long getTotalUsers() {

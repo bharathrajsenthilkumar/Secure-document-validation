@@ -1,23 +1,31 @@
 package com.example.securedocumentvalidation.service;
 
 import com.example.securedocumentvalidation.dto.DocumentResponseDTO;
+import com.example.securedocumentvalidation.dto.VerificationResponse;
 import com.example.securedocumentvalidation.entity.AuditAction;
 import com.example.securedocumentvalidation.entity.Document;
+import com.example.securedocumentvalidation.entity.SharedDocument;
 import com.example.securedocumentvalidation.repository.DocumentRepository;
+import com.example.securedocumentvalidation.repository.SharedDocumentRepository;
 import com.example.securedocumentvalidation.util.CryptoUtil;
 import com.example.securedocumentvalidation.util.HashUtil;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
-import com.example.securedocumentvalidation.dto.VerificationResponse;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 
 @Service
 public class DocumentService {
@@ -29,49 +37,154 @@ public class DocumentService {
 
     private final DocumentRepository repository;
     private final AuditService auditService;
+    private final SharedDocumentRepository sharedDocumentRepository;
 
-    public DocumentService(DocumentRepository repository,
-                           AuditService auditService) {
-
+    public DocumentService(
+            DocumentRepository repository,
+            AuditService auditService,
+            SharedDocumentRepository sharedDocumentRepository
+    ) {
         this.repository = repository;
         this.auditService = auditService;
+        this.sharedDocumentRepository = sharedDocumentRepository;
     }
-
     // =========================
-    // LIST USER DOCUMENTS (DTO)
-    // =========================
+// LIST USER DOCUMENTS (OWN + SHARED)
+// =========================
     public Page<DocumentResponseDTO> getUserDocuments(
             String username,
             Pageable pageable) {
 
-        return repository.findByOwnerUsername(username, pageable)
-                .map(doc -> new DocumentResponseDTO(
-                        doc.getId(),
-                        doc.getFilename(),
-                        doc.getOwnerUsername()
-                ));
+        return repository
+                .findUserAndSharedDocuments(
+                        username,
+                        pageable
+                )
+                .map(doc ->
+                        new DocumentResponseDTO(
+                                doc.getId(),
+                                doc.getFilename(),
+                                doc.getOwnerUsername(),
+                                doc.getVersion(),
+                                doc.getLatest(),
+                                doc.getDocumentGroupId()
+                        ));
     }
 
     // =========================
-    // LIST ALL DOCUMENTS (ADMIN)
-    // =========================
+// LIST ALL DOCUMENTS (ADMIN)
+// =========================
     public Page<DocumentResponseDTO> getAllDocuments(
             Pageable pageable) {
 
-        return repository.findAll(pageable)
-                .map(doc -> new DocumentResponseDTO(
+        return repository
+                .findAll(pageable)
+                .map(doc ->
+                        new DocumentResponseDTO(
+                                doc.getId(),
+                                doc.getFilename(),
+                                doc.getOwnerUsername(),
+                                doc.getVersion(),
+                                doc.getLatest(),
+                                doc.getDocumentGroupId()
+                        ));
+    }
+    // =========================
+    // SEARCH BY FILENAME
+    // =========================
+    public Page<DocumentResponseDTO> searchByFilename(
+            String filename,
+            String username,
+            boolean isAdmin,
+            Pageable pageable) {
+
+        Page<Document> documents;
+
+        if (isAdmin) {
+
+            documents = repository
+                    .findByFilenameContainingIgnoreCase(
+                            filename,
+                            pageable
+                    );
+
+        } else {
+
+            documents = repository
+                    .findByFilenameContainingIgnoreCaseAndOwnerUsername(
+                            filename,
+                            username,
+                            pageable
+                    );
+        }
+
+        return documents.map(doc ->
+                new DocumentResponseDTO(
                         doc.getId(),
                         doc.getFilename(),
-                        doc.getOwnerUsername()
+                        doc.getOwnerUsername(),
+                        doc.getVersion(),
+                        doc.getLatest(),
+                        doc.getDocumentGroupId()
                 ));
     }
 
     // =========================
-    // UPLOAD DOCUMENT
+// SEARCH BY OWNER
+// =========================
+    public Page<DocumentResponseDTO> searchByOwner(
+            String owner,
+            String username,
+            boolean isAdmin,
+            Pageable pageable) {
+
+        if (isAdmin) {
+
+            return repository
+                    .findByOwnerUsernameContainingIgnoreCase(
+                            owner,
+                            pageable
+                    )
+                    .map(doc ->
+                            new DocumentResponseDTO(
+                                    doc.getId(),
+                                    doc.getFilename(),
+                                    doc.getOwnerUsername(),
+                                    doc.getVersion(),
+                                    doc.getLatest(),
+                                    doc.getDocumentGroupId()
+                            ));
+        }
+
+        if (!owner.equalsIgnoreCase(username)) {
+
+            throw new AccessDeniedException(
+                    "You are not authorized to access other users documents"
+            );
+        }
+
+        return repository
+                .findByOwnerUsername(
+                        username,
+                        pageable
+                )
+                .map(doc ->
+                        new DocumentResponseDTO(
+                                doc.getId(),
+                                doc.getFilename(),
+                                doc.getOwnerUsername(),
+                                doc.getVersion(),
+                                doc.getLatest(),
+                                doc.getDocumentGroupId()
+                        ));
+    }
     // =========================
+// UPLOAD DOCUMENT
+// =========================
     public Document uploadFile(
             MultipartFile file,
-            String username) throws IOException {
+            String username
+    ) throws IOException {
 
         Files.createDirectories(Paths.get(UPLOAD_DIR));
 
@@ -83,20 +196,16 @@ public class DocumentService {
         Path filePath =
                 Paths.get(UPLOAD_DIR, storedFileName);
 
-        // ORIGINAL FILE BYTES
         byte[] originalBytes = file.getBytes();
 
-        // HASH GENERATION
-        String hash = HashUtil.sha256(originalBytes);
+        String hash =
+                HashUtil.sha256(originalBytes);
 
-        // ENCRYPT FILE
         byte[] encryptedBytes =
                 CryptoUtil.encrypt(originalBytes);
 
-        // SAVE ENCRYPTED FILE
         Files.write(filePath, encryptedBytes);
 
-        // SAVE DB METADATA
         Document doc = new Document();
 
         doc.setFilename(file.getOriginalFilename());
@@ -104,9 +213,35 @@ public class DocumentService {
         doc.setOwnerUsername(username);
         doc.setHash(hash);
 
+        // Version History
+        List<Document> existing =
+                repository.findByOwnerUsername(username);
+
+        Document latest = existing.stream()
+                .filter(d ->
+                        d.getFilename().equals(file.getOriginalFilename()) &&
+                                Boolean.TRUE.equals(d.getLatest()))
+                .findFirst()
+                .orElse(null);
+
+        if (latest == null) {
+
+            doc.setDocumentGroupId(UUID.randomUUID().toString());
+            doc.setVersion(1);
+            doc.setLatest(true);
+
+        } else {
+
+            latest.setLatest(false);
+            repository.save(latest);
+
+            doc.setDocumentGroupId(latest.getDocumentGroupId());
+            doc.setVersion(latest.getVersion() + 1);
+            doc.setLatest(true);
+        }
+
         Document saved = repository.save(doc);
 
-        // AUDIT LOG
         auditService.log(
                 username,
                 AuditAction.UPLOAD,
@@ -120,8 +255,30 @@ public class DocumentService {
         );
 
         return saved;
-    }
+    }// =========================
+    // VERSION HISTORY
+// =========================
+    public List<DocumentResponseDTO> getVersionHistory(
+            String documentGroupId
+    ) {
 
+        return repository
+                .findByDocumentGroupIdOrderByVersionDesc(
+                        documentGroupId
+                )
+                .stream()
+                .map(doc ->
+                        new DocumentResponseDTO(
+                                doc.getId(),
+                                doc.getFilename(),
+                                doc.getOwnerUsername(),
+                                doc.getVersion(),
+                                doc.getLatest(),
+                                doc.getDocumentGroupId()
+                        )
+                )
+                .toList();
+    }
     // =========================
     // DOWNLOAD DOCUMENT
     // =========================
@@ -138,8 +295,18 @@ public class DocumentService {
         boolean isOwner =
                 doc.getOwnerUsername().equals(username);
 
-        // ACCESS CHECK
-        if (!isOwner && !isAdmin) {
+        boolean isShared =
+                sharedDocumentRepository
+                        .findByDocumentIdAndSharedWithUsername(
+                                id,
+                                username
+                        )
+                        .isPresent();
+
+// ACCESS CHECK
+        if (!isOwner &&
+                !isAdmin &&
+                !isShared) {
 
             auditService.log(
                     username,
@@ -147,7 +314,9 @@ public class DocumentService {
                     id
             );
 
-            throw new AccessDeniedException("Forbidden");
+            throw new AccessDeniedException(
+                    "Forbidden"
+            );
         }
 
         Path path = Paths.get(doc.getFilepath());
@@ -228,11 +397,15 @@ public class DocumentService {
 
         Document doc = repository.findById(id)
                 .orElseThrow(() ->
-                        new RuntimeException("Document not found"));
+                        new RuntimeException(
+                                "Document not found"
+                        )
+                );
 
         try {
 
-            Path path = Paths.get(doc.getFilepath());
+            Path path =
+                    Paths.get(doc.getFilepath());
 
             if (!Files.exists(path)) {
 
@@ -248,13 +421,28 @@ public class DocumentService {
                     Files.readAllBytes(path);
 
             byte[] decryptedBytes =
-                    CryptoUtil.decrypt(encryptedBytes);
+                    CryptoUtil.decrypt(
+                            encryptedBytes
+                    );
 
             String currentHash =
-                    HashUtil.sha256(decryptedBytes);
+                    HashUtil.sha256(
+                            decryptedBytes
+                    );
 
             boolean verified =
-                    currentHash.equals(doc.getHash());
+                    currentHash.equals(
+                            doc.getHash()
+                    );
+
+            if (verified) {
+
+                auditService.log(
+                        doc.getOwnerUsername(),
+                        AuditAction.VERIFY,
+                        id
+                );
+            }
 
             return new VerificationResponse(
                     doc.getId(),
@@ -341,4 +529,34 @@ public class DocumentService {
             String filename,
             byte[] data
     ) {}
+    // =========================
+// GET SHARED DOCUMENTS
+// =========================
+    public List<DocumentResponseDTO> getSharedDocuments(
+            String username
+    ) {
+
+        List<DocumentResponseDTO> response = new ArrayList<>();
+
+        List<com.example.securedocumentvalidation.entity.SharedDocument> sharedDocs =
+                sharedDocumentRepository.findBySharedWithUsername(username);
+
+        for (var shared : sharedDocs) {
+
+            repository.findById(shared.getDocumentId())
+                    .ifPresent(doc ->
+                            response.add(
+                                    new DocumentResponseDTO(
+                                            doc.getId(),
+                                            doc.getFilename(),
+                                            doc.getOwnerUsername(),
+                                            doc.getVersion(),
+                                            doc.getLatest(),
+                                            doc.getDocumentGroupId()
+                                    )
+                            ));
+        }
+
+        return response;
+    }
 }

@@ -19,11 +19,28 @@ public class Document {
 
     private LocalDateTime uploadedAt = LocalDateTime.now();
 
-    // 🔐 integrity hash
+    // =========================
+    // Version History
+    // =========================
+    @Column(nullable = false)
+    private String documentGroupId;
+
+    @Column(nullable = false)
+    private Integer version;
+
+    @Column(nullable = false)
+    private Boolean latest;
+
+    // =========================
+    // Integrity Hash
+    // =========================
     @Column(nullable = false, length = 64)
     private String hash;
 
-    // ===== getters =====
+    // =========================
+    // Getters
+    // =========================
+
     public Long getId() {
         return id;
     }
@@ -44,11 +61,26 @@ public class Document {
         return uploadedAt;
     }
 
+    public String getDocumentGroupId() {
+        return documentGroupId;
+    }
+
+    public Integer getVersion() {
+        return version;
+    }
+
+    public Boolean getLatest() {
+        return latest;
+    }
+
     public String getHash() {
         return hash;
     }
 
-    // ===== setters =====
+    // =========================
+    // Setters
+    // =========================
+
     public void setId(Long id) {
         this.id = id;
     }
@@ -63,6 +95,18 @@ public class Document {
 
     public void setOwnerUsername(String ownerUsername) {
         this.ownerUsername = ownerUsername;
+    }
+
+    public void setDocumentGroupId(String documentGroupId) {
+        this.documentGroupId = documentGroupId;
+    }
+
+    public void setVersion(Integer version) {
+        this.version = version;
+    }
+
+    public void setLatest(Boolean latest) {
+        this.latest = latest;
     }
 
     public void setHash(String hash) {

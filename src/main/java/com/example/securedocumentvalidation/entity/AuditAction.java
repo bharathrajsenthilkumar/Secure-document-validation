@@ -5,5 +5,7 @@ public enum AuditAction {
     UPLOAD,
     DOWNLOAD,
     DELETE,
-    DENIED
+    VERIFY,
+    DENIED,
+    SHARE
 }
